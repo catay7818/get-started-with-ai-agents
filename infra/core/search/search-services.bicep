@@ -53,7 +53,8 @@ resource search 'Microsoft.Search/searchServices@2024-06-01-preview' = {
   }
   identity: searchIdentityProvider
   properties: {
-    authOptions: authOptions
+    // Azure validation requires authOptions to be null when DisableLocalAuth is true
+    authOptions: disableLocalAuth ? null : authOptions
     disableLocalAuth: disableLocalAuth
     disabledDataExfiltrationOptions: disabledDataExfiltrationOptions
     encryptionWithCmk: encryptionWithCmk
