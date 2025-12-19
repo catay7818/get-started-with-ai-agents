@@ -47,11 +47,11 @@ var searchIdentityProvider = (sku.name == 'free') ? null : {
 resource search 'Microsoft.Search/searchServices@2024-06-01-preview' = {
   name: name
   location: location
-  tags: tags  
+  tags: tags
   sku: {
     name: 'basic'
   }
-  identity: searchIdentityProvider  
+  identity: searchIdentityProvider
   properties: {
     authOptions: authOptions
     disableLocalAuth: disableLocalAuth
@@ -76,6 +76,17 @@ module aiSearchCognitiveServicesUser  '../security/role.bicep' = {
   }
 }
 
+// Grant the AI Foundry project identity access to query/index Azure AI Search when using AAD auth
+resource aiProjectSearchIndexDataContributorRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(search.id, projectName, '8ebe5a00-799e-43f5-93ac-243d3dce84a7')
+  scope: search
+  properties: {
+    principalId: aiServices::project.identity.principalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: resourceId('Microsoft.Authorization/roleDefinitions', '8ebe5a00-799e-43f5-93ac-243d3dce84a7') // Search Index Data Contributor
+  }
+}
+
 resource aiServices 'Microsoft.CognitiveServices/accounts@2025-04-01-preview' existing = {
   name: serviceName
 
@@ -83,20 +94,27 @@ resource aiServices 'Microsoft.CognitiveServices/accounts@2025-04-01-preview' ex
     name: projectName
 
     // AI Project Search Connection
-    resource searchConnection 'connections' = {
+    resource searchConnectionApiKey 'connections' = if (!disableLocalAuth) {
       name: 'searchConnection'
-      // dependsOn: [project] is implicitly handled by 'parent: project'
       properties: {
         category: 'CognitiveSearch'
         authType: 'ApiKey'
         isSharedToAll: true
-        target: 'https://${search.name}.search.windows.net/' // search.name will resolve to searchServiceName
+        target: 'https://${search.name}.search.windows.net/'
         credentials: {
-          // This is valid because if this resource is deployed, 'search' is also deployed
-          // and 'search.name' (which is 'searchServiceName') is known.
           key: search.listAdminKeys().primaryKey
         }
-      }      
+      }
+    }
+
+    resource searchConnectionAad 'connections' = if (disableLocalAuth) {
+      name: 'searchConnection'
+      properties: {
+        category: 'CognitiveSearch'
+        authType: 'AAD'
+        isSharedToAll: true
+        target: 'https://${search.name}.search.windows.net/'
+      }
     }
 
   }
@@ -107,5 +125,7 @@ output id string = search.id
 output endpoint string = 'https://${name}.search.windows.net/'
 output name string = search.name
 output principalId string = !empty(searchIdentityProvider) ? search.identity.principalId : ''
-output searchConnectionId string = !empty(searchIdentityProvider) ? aiServices::project::searchConnection.id : ''
+output searchConnectionId string = !empty(searchIdentityProvider)
+  ? (disableLocalAuth ? aiServices::project::searchConnectionAad.id : aiServices::project::searchConnectionApiKey.id)
+  : ''
 

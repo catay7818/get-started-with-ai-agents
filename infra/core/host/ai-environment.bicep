@@ -18,6 +18,8 @@ param applicationInsightsName string = ''
 param searchServiceName string = ''
 @description('The Application Insights connection name.')
 param appInsightConnectionName string
+@description('Disable local (key-based) authentication on resources that support it. Recommended when Azure Policy enforces disableLocalAuth.')
+param disableLocalAuth bool = true
 param tags object = {}
 param aoaiConnectionName string
 module storageAccount '../storage/storage-account.bicep' = {
@@ -86,6 +88,7 @@ module cognitiveServices '../ai/cognitiveservices.bicep' = {
     tags: tags
     aiServiceName: aiServicesName
     aiProjectName: aiProjectName
+    disableLocalAuth: disableLocalAuth
     deployments: aiServiceModelDeployments
     appInsightsId: applicationInsights.outputs.id
     appInsightConnectionName: appInsightConnectionName
@@ -133,12 +136,30 @@ module searchService '../search/search-services.bicep' =
       location: location
       tags: tags
       name: searchServiceName
+      disableLocalAuth: disableLocalAuth
       semanticSearch: 'free'
       authOptions: { aadOrApiKey: { aadAuthFailureMode: 'http401WithBearerChallenge'}}
       projectName: cognitiveServices.outputs.projectName
       serviceName: cognitiveServices.outputs.serviceName
     }
   }
+
+resource search 'Microsoft.Search/searchServices@2024-06-01-preview' existing = if (!empty(searchServiceName)) {
+  name: searchServiceName
+}
+
+resource projectSearchIndexDataContributorRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!empty(searchServiceName)) {
+  name: guid(search.id, aiProjectName, '8ebe5a00-799e-43f5-93ac-243d3dce84a7')
+  scope: search
+  properties: {
+    principalId: cognitiveServices.outputs.projectPrincipalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: resourceId('Microsoft.Authorization/roleDefinitions', '8ebe5a00-799e-43f5-93ac-243d3dce84a7') // Search Index Data Contributor
+  }
+  dependsOn: [
+    searchService
+  ]
+}
 
 
 // Outputs

@@ -6,7 +6,7 @@ targetScope = 'subscription'
 param environmentName string
 
 @description('Location for all resources')
-// Based on the model, creating an agent is not supported in all regions. 
+// Based on the model, creating an agent is not supported in all regions.
 // The combination of allowed and usageName below is for AZD to check AI model gpt-5-mini quota only for the allowed regions for creating an agent.
 // If using different models, update the SKU,capacity depending on the model you use.
 // https://learn.microsoft.com/azure/ai-services/agents/concepts/model-region-support
@@ -50,7 +50,8 @@ param storageAccountName string = ''
 param logAnalyticsWorkspaceName string = ''
 @description('Id of the user or app to assign application roles')
 param principalId string = ''
-
+@description('Disable local (key-based) authentication on resources that support it. Useful when Azure Policy enforces disableLocalAuth.')
+param disableLocalAuth bool = true
 // Chat completion model
 @description('Format of the chat model to deploy')
 @allowed(['Microsoft', 'OpenAI'])
@@ -122,11 +123,13 @@ param seed string = newGuid()
 param searchServiceEndpoint string = ''
 param searchConnectionId string = ''
 
-var runnerPrincipalType = templateValidationMode? 'ServicePrincipal' : 'User'
+var runnerPrincipalType = templateValidationMode ? 'ServicePrincipal' : 'User'
 
 var abbrs = loadJsonContent('./abbreviations.json')
 
-var resourceToken = templateValidationMode? toLower(uniqueString(subscription().id, environmentName, location, seed)) :  toLower(uniqueString(subscription().id, environmentName, location))
+var resourceToken = templateValidationMode
+  ? toLower(uniqueString(subscription().id, environmentName, location, seed))
+  : toLower(uniqueString(subscription().id, environmentName, location))
 
 var tags = { 'azd-env-name': environmentName }
 
@@ -147,7 +150,7 @@ var aiChatModel = [
     }
   }
 ]
-var aiEmbeddingModel = [ 
+var aiEmbeddingModel = [
   {
     name: embeddingDeploymentName
     model: {
@@ -162,10 +165,7 @@ var aiEmbeddingModel = [
   }
 ]
 
-var aiDeployments = concat(
-  aiChatModel,
-  useSearchService ? aiEmbeddingModel : [])
-
+var aiDeployments = concat(aiChatModel, useSearchService ? aiEmbeddingModel : [])
 
 // Organize resources in a resource group
 resource rg 'Microsoft.Resources/resourceGroups@2021-04-01' = {
@@ -183,7 +183,6 @@ var logAnalyticsWorkspaceResolvedName = !useApplicationInsights
 var resolvedSearchServiceName = !useSearchService
   ? ''
   : !empty(searchServiceName) ? searchServiceName : '${abbrs.searchSearchServices}${resourceToken}'
-  
 
 module ai 'core/host/ai-environment.bicep' = if (empty(azureExistingAIProjectResourceId)) {
   name: 'ai'
@@ -191,6 +190,7 @@ module ai 'core/host/ai-environment.bicep' = if (empty(azureExistingAIProjectRes
   params: {
     location: location
     tags: tags
+    disableLocalAuth: disableLocalAuth
     storageAccountName: !empty(storageAccountName)
       ? storageAccountName
       : '${abbrs.storageStorageAccounts}${resourceToken}'
@@ -207,15 +207,40 @@ module ai 'core/host/ai-environment.bicep' = if (empty(azureExistingAIProjectRes
   }
 }
 
+// When bringing an existing AI project, still allow deploying Search + the project connection
+var existingAiServicesName = !empty(azureExistingAIProjectResourceId) ? split(azureExistingAIProjectResourceId, '/')[8] : ''
+var existingAiProjectName = !empty(azureExistingAIProjectResourceId) ? split(azureExistingAIProjectResourceId, '/')[10] : ''
+
+module searchServiceExistingProject 'core/search/search-services.bicep' = if (useSearchService && !empty(azureExistingAIProjectResourceId)) {
+  name: 'searchServiceExistingProject'
+  scope: rg
+  params: {
+    location: location
+    tags: tags
+    name: resolvedSearchServiceName
+    disableLocalAuth: disableLocalAuth
+    semanticSearch: 'free'
+    authOptions: { aadOrApiKey: { aadAuthFailureMode: 'http401WithBearerChallenge'}}
+    projectName: existingAiProjectName
+    serviceName: existingAiServicesName
+  }
+}
+
 var searchServiceEndpointFromAIOutput = !useSearchService
   ? ''
-  : empty(azureExistingAIProjectResourceId) ? ai!.outputs.searchServiceEndpoint : ''
+  : empty(azureExistingAIProjectResourceId)
+      ? ai!.outputs.searchServiceEndpoint
+      : 'https://${resolvedSearchServiceName}.search.windows.net/'
 
 var searchConnectionIdFromAIOutput = !useSearchService
   ? ''
-  : empty(azureExistingAIProjectResourceId) ? ai!.outputs.searchConnectionId : ''
+  : empty(azureExistingAIProjectResourceId)
+      ? ai!.outputs.searchConnectionId
+      : format('{0}/connections/{1}', azureExistingAIProjectResourceId, 'searchConnection')
 
-var searchServiceEndpoint_final = empty(searchServiceEndpoint) ? searchServiceEndpointFromAIOutput : searchServiceEndpoint
+var searchServiceEndpoint_final = empty(searchServiceEndpoint)
+  ? searchServiceEndpointFromAIOutput
+  : searchServiceEndpoint
 
 var searchConnectionId_final = empty(searchConnectionId) ? searchConnectionIdFromAIOutput : searchConnectionId
 
@@ -229,15 +254,19 @@ module logAnalytics 'core/monitor/loganalytics.bicep' = if (!empty(azureExisting
     name: logAnalyticsWorkspaceResolvedName
   }
 }
-var existingProjEndpoint = !empty(azureExistingAIProjectResourceId) ? format('https://{0}.services.ai.azure.com/api/projects/{1}',split(azureExistingAIProjectResourceId, '/')[8], split(azureExistingAIProjectResourceId, '/')[10]) : ''
+var existingProjEndpoint = !empty(azureExistingAIProjectResourceId)
+  ? format(
+      'https://{0}.services.ai.azure.com/api/projects/{1}',
+      split(azureExistingAIProjectResourceId, '/')[8],
+      split(azureExistingAIProjectResourceId, '/')[10]
+    )
+  : ''
 
 var projectResourceId = !empty(azureExistingAIProjectResourceId)
   ? azureExistingAIProjectResourceId
   : ai!.outputs.projectResourceId
 
-var projectEndpoint = !empty(azureExistingAIProjectResourceId)
-  ? existingProjEndpoint
-  : ai!.outputs.aiProjectEndpoint
+var projectEndpoint = !empty(azureExistingAIProjectResourceId) ? existingProjEndpoint : ai!.outputs.aiProjectEndpoint
 
 var resolvedApplicationInsightsName = !useApplicationInsights || !empty(azureExistingAIProjectResourceId)
   ? ''
@@ -253,7 +282,10 @@ module monitoringMetricsContribuitorRoleAzureAIDeveloperRG 'core/security/appins
   }
 }
 
-resource existingProjectRG 'Microsoft.Resources/resourceGroups@2021-04-01' existing = if (!empty(azureExistingAIProjectResourceId) && contains(azureExistingAIProjectResourceId, '/')) {
+resource existingProjectRG 'Microsoft.Resources/resourceGroups@2021-04-01' existing = if (!empty(azureExistingAIProjectResourceId) && contains(
+  azureExistingAIProjectResourceId,
+  '/'
+)) {
   name: split(azureExistingAIProjectResourceId, '/')[4]
 }
 
@@ -263,7 +295,7 @@ module userRoleAzureAIDeveloperBackendExistingProjectRG 'core/security/role.bice
   params: {
     principalType: 'ServicePrincipal'
     principalId: api.outputs.SERVICE_API_IDENTITY_PRINCIPAL_ID
-    roleDefinitionId: '64702f94-c441-49e6-a78b-ef80e0188fee' 
+    roleDefinitionId: '64702f94-c441-49e6-a78b-ef80e0188fee'
   }
 }
 
@@ -299,7 +331,7 @@ module api 'api.bicep' = {
     agentDeploymentName: agentDeploymentName
     searchConnectionName: searchConnectionName
     aiSearchIndexName: aiSearchIndexName
-    searchServiceEndpoint: searchServiceEndpointFromAIOutput
+    searchServiceEndpoint: searchServiceEndpoint_final
     embeddingDeploymentName: embeddingDeploymentName
     embeddingDeploymentDimensions: embeddingDeploymentDimensions
     agentName: agentName
@@ -311,8 +343,6 @@ module api 'api.bicep' = {
   }
 }
 
-
-
 module userRoleAzureAIDeveloper 'core/security/role.bicep' = {
   name: 'user-role-azureai-developer'
   scope: rg
@@ -323,7 +353,7 @@ module userRoleAzureAIDeveloper 'core/security/role.bicep' = {
   }
 }
 
-module userCognitiveServicesUser  'core/security/role.bicep' = if (empty(azureExistingAIProjectResourceId)) {
+module userCognitiveServicesUser 'core/security/role.bicep' = if (empty(azureExistingAIProjectResourceId)) {
   name: 'user-role-cognitive-services-user'
   scope: rg
   params: {
@@ -333,7 +363,7 @@ module userCognitiveServicesUser  'core/security/role.bicep' = if (empty(azureEx
   }
 }
 
-module userAzureAIUser  'core/security/role.bicep' = if (empty(azureExistingAIProjectResourceId)) {
+module userAzureAIUser 'core/security/role.bicep' = if (empty(azureExistingAIProjectResourceId)) {
   name: 'user-role-azure-ai-user'
   scope: rg
   params: {
@@ -343,7 +373,7 @@ module userAzureAIUser  'core/security/role.bicep' = if (empty(azureExistingAIPr
   }
 }
 
-module backendAzureAIUser  'core/security/role.bicep' = if (empty(azureExistingAIProjectResourceId)) {
+module backendAzureAIUser 'core/security/role.bicep' = if (empty(azureExistingAIProjectResourceId)) {
   name: 'backend-role-azure-ai-user'
   scope: rg
   params: {
@@ -353,7 +383,7 @@ module backendAzureAIUser  'core/security/role.bicep' = if (empty(azureExistingA
   }
 }
 
-module backendCognitiveServicesUser  'core/security/role.bicep' = if (empty(azureExistingAIProjectResourceId)) {
+module backendCognitiveServicesUser 'core/security/role.bicep' = if (empty(azureExistingAIProjectResourceId)) {
   name: 'backend-role-cognitive-services-user'
   scope: rg
   params: {
@@ -363,7 +393,7 @@ module backendCognitiveServicesUser  'core/security/role.bicep' = if (empty(azur
   }
 }
 
-module backendCognitiveServicesUser2  'core/security/role.bicep' = if (!empty(azureExistingAIProjectResourceId)) {
+module backendCognitiveServicesUser2 'core/security/role.bicep' = if (!empty(azureExistingAIProjectResourceId)) {
   name: 'backend-role-cognitive-services-user2'
   scope: existingProjectRG
   params: {
@@ -372,7 +402,6 @@ module backendCognitiveServicesUser2  'core/security/role.bicep' = if (!empty(az
     roleDefinitionId: 'a97b65f3-24c7-4388-baec-2e87135dc908'
   }
 }
-
 
 module backendRoleSearchIndexDataContributorRG 'core/security/role.bicep' = if (useSearchService) {
   name: 'backend-role-azure-index-data-contributor-rg'

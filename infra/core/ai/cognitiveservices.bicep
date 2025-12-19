@@ -43,11 +43,11 @@ resource account 'Microsoft.CognitiveServices/accounts@2025-04-01-preview' = {
     customSubDomainName: customSubDomainName
     networkAcls: networkAcls
     publicNetworkAccess: publicNetworkAccess
-    disableLocalAuth: disableLocalAuth 
+    disableLocalAuth: disableLocalAuth
   }
 }
 
-resource aiServiceConnection 'Microsoft.CognitiveServices/accounts/connections@2025-04-01-preview' = {
+resource aiServiceConnectionApiKey 'Microsoft.CognitiveServices/accounts/connections@2025-04-01-preview' = if (!disableLocalAuth) {
   name: aoaiConnectionName
   parent: account
   properties: {
@@ -58,6 +58,21 @@ resource aiServiceConnection 'Microsoft.CognitiveServices/accounts/connections@2
     credentials: {
       key: account.listKeys().key1
     }
+    metadata: {
+      ApiType: 'azure'
+      ResourceId: account.id
+    }
+  }
+}
+
+resource aiServiceConnectionAad 'Microsoft.CognitiveServices/accounts/connections@2025-04-01-preview' = if (disableLocalAuth) {
+  name: aoaiConnectionName
+  parent: account
+  properties: {
+    category: 'AzureOpenAI'
+    authType: 'AAD'
+    isSharedToAll: true
+    target: account.properties.endpoints['OpenAI Language Model Instance API']
     metadata: {
       ApiType: 'azure'
       ResourceId: account.id
@@ -93,7 +108,7 @@ resource storageAccountConnection 'Microsoft.CognitiveServices/accounts/connecti
     category: 'AzureStorageAccount'
     target: storageAccountBlobEndpoint
     authType: 'AAD'
-    isSharedToAll: true    
+    isSharedToAll: true
     metadata: {
       ApiType: 'Azure'
       ResourceId: storageAccountId
@@ -105,7 +120,7 @@ resource aiProject 'Microsoft.CognitiveServices/accounts/projects@2025-04-01-pre
   parent: account
   name: aiProjectName
   location: location
-  tags: tags  
+  tags: tags
   identity: {
     type: 'SystemAssigned'
   }
@@ -121,9 +136,9 @@ resource aiServicesDeployments 'Microsoft.CognitiveServices/accounts/deployments
   name: deployment.name
   properties: {
     model: deployment.model
-    raiPolicyName: contains(deployment, 'raiPolicyName') ? deployment.raiPolicyName : null
+    raiPolicyName: deployment.?raiPolicyName
   }
-  sku: contains(deployment, 'sku') ? deployment.sku : {
+  sku: deployment.?sku ?? {
     name: 'Standard'
     capacity: 20
   }
