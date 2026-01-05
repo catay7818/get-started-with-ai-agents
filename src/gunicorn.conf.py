@@ -40,14 +40,15 @@ else:
     logger.info("Loaded environment variables from default location")
 
 
-def list_files_in_files_directory() -> List[str]:    
+def list_files_in_files_directory() -> List[str]:
     # Get the absolute path of the 'files' directory
     files_directory = os.path.abspath(os.path.join(os.path.dirname(__file__), 'files'))
-    
+
     # List all files in the 'files' directory
     files = [f for f in os.listdir(files_directory) if os.path.isfile(os.path.join(files_directory, f))]
-    
+
     return files
+
 
 FILES_NAMES = list_files_in_files_directory()
 
@@ -67,7 +68,7 @@ async def create_index_maybe(
     """
     from api.search_index_manager import SearchIndexManager
     endpoint = os.environ.get('AZURE_AI_SEARCH_ENDPOINT')
-    embedding = os.getenv('AZURE_AI_EMBED_DEPLOYMENT_NAME')    
+    embedding = os.getenv("AZURE_AI_EMBED_DEPLOYMENT_NAME")
     if endpoint and embedding:
         try:
             aoai_connection = await ai_client.connections.get_default(
@@ -75,7 +76,7 @@ async def create_index_maybe(
         except ValueError as e:
             logger.error("Error creating index: {e}")
             return
-        
+
         embed_api_key = None
         if aoai_connection.credentials and isinstance(aoai_connection.credentials, ApiKeyCredentials):
             embed_api_key = aoai_connection.credentials.api_key
@@ -133,16 +134,20 @@ async def get_available_tool(
         await create_index_maybe(project_client, creds)
 
         return AzureAISearchAgentTool(
-            azure_ai_search=AzureAISearchToolResource(indexes=[AISearchIndexResource( 
-                project_connection_id=conn_id,
-                index_name=search_index_name,
-                query_type="simple"
-            )])
+            azure_ai_search=AzureAISearchToolResource(
+                indexes=[
+                    AISearchIndexResource(
+                        project_connection_id=conn_id,
+                        index_name=search_index_name,
+                        query_type="simple",
+                    )
+                ]
+            )
         )
     else:
         logger.info(
             "agent: index was not initialized, falling back to file search.")
-        
+
         # Upload files for file search
         file_streams = [open(_get_file_path(file_name), "rb") for file_name in FILES_NAMES]
 
@@ -156,7 +161,6 @@ async def get_available_tool(
             logger.warning(f"Asset file not found.")
             logger.info("Creating vector store without file for demonstration...")
 
-
         logger.info("agent: file store and vector store success")
 
         return FileSearchTool(vector_store_ids=[vector_store.id])
@@ -169,7 +173,7 @@ async def create_agent(ai_project: AIProjectClient,
     tool = await get_available_tool(ai_project, openai_client, creds)
 
     instructions = "Use File Search always with citations.  Avoid to use base knowledge."
-    
+
     if isinstance(tool, AzureAISearchAgentTool):
         instructions = (
             "Use AI Search always. "
@@ -202,10 +206,13 @@ async def initialize_eval(project_client: AIProjectClient, openai_client: AsyncO
             # Create an evaluation with testing criteria
             data_source_config = {"type": "azure_ai_source", "scenario": "responses"}
             testing_criteria = [
-                {   "type": "azure_ai_evaluator", 
+                {
+                    "type": "azure_ai_evaluator",
                     "name": "violence",
                     "evaluator_name": "builtin.violence",
-                    "initialization_parameters": {"deployment_name": os.environ["AZURE_AI_AGENT_DEPLOYMENT_NAME"]},
+                    "initialization_parameters": {
+                        "deployment_name": os.environ["AZURE_AI_AGENT_DEPLOYMENT_NAME"]
+                    },
                 }
             ]
             eval_object = await openai_client.evals.create(
@@ -270,18 +277,23 @@ async def initialize_resources():
                     logger.info(f"Agent with agent id, {agent_obj.id} retrieved.")
                 except Exception as e:
                     logger.info(f"Agent name, {agent_name} not found.")
-                    
+
             # Create a new agent
             if not agent_obj:
                 agent_obj = await create_agent(project_client, openai_client, credential)
                 logger.info(f"Created agent, agent ID: {agent_obj.id}")
+            else:
+                # verify tools even when an agent already exists
+                logger.info("Ensuring tools are created")
+                await get_available_tool(project_client, openai_client, credential)
+                logger.info("Ensured tools are created")
 
             os.environ["AZURE_EXISTING_AGENT_ID"] = agent_obj.id
 
             await initialize_eval(project_client, openai_client, agent_obj, credential)
     except Exception as e:
         logger.info("Error creating agent: {e}", exc_info=True)
-        raise RuntimeError(f"Failed to create the agent: {e}")  
+        raise RuntimeError(f"Failed to create the agent: {e}")
 
 
 def on_starting(server):
