@@ -77,6 +77,17 @@ module aiSearchCognitiveServicesUser  '../security/role.bicep' = {
   }
 }
 
+// Grant the AI Foundry project identity read access to the Search service (management-plane)
+resource aiProjectSearchReaderRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(search.id, projectName, 'acdd72a7-3385-48ef-bd42-f606fba81ae7')
+  scope: search
+  properties: {
+    principalId: aiServices::project.identity.principalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: resourceId('Microsoft.Authorization/roleDefinitions', 'acdd72a7-3385-48ef-bd42-f606fba81ae7') // Reader
+  }
+}
+
 // Grant the AI Foundry project identity access to query/index Azure AI Search when using AAD auth
 resource aiProjectSearchIndexDataContributorRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(search.id, projectName, '8ebe5a00-799e-43f5-93ac-243d3dce84a7')

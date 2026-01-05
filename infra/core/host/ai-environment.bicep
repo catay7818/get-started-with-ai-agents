@@ -161,6 +161,19 @@ resource projectSearchIndexDataContributorRoleAssignment 'Microsoft.Authorizatio
   ]
 }
 
+resource projectSearchReaderRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!empty(searchServiceName)) {
+  name: guid(search.id, aiProjectName, 'acdd72a7-3385-48ef-bd42-f606fba81ae7')
+  scope: search
+  properties: {
+    principalId: cognitiveServices.outputs.projectPrincipalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: resourceId('Microsoft.Authorization/roleDefinitions', 'acdd72a7-3385-48ef-bd42-f606fba81ae7') // Reader
+  }
+  dependsOn: [
+    searchService
+  ]
+}
+
 
 // Outputs
 output storageAccountId string = storageAccount.outputs.id
