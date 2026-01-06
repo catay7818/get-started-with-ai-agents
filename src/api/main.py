@@ -12,6 +12,7 @@ import fastapi
 from fastapi.staticfiles import StaticFiles
 from fastapi import Request
 from fastapi.responses import JSONResponse
+from fastapi_mcp import FastApiMCP
 from dotenv import load_dotenv
 from util import get_env_file_path
 
@@ -24,7 +25,7 @@ logger = None
 async def lifespan(app: fastapi.FastAPI):
     agent_version_obj = None
     proj_endpoint = os.environ.get("AZURE_EXISTING_AIPROJECT_ENDPOINT")
-    agent_id = os.environ.get("AZURE_EXISTING_AGENT_ID")    
+    agent_id = os.environ.get("AZURE_EXISTING_AGENT_ID")
     try:
 
         async with (
@@ -49,14 +50,14 @@ async def lifespan(app: fastapi.FastAPI):
                     configure_azure_monitor(connection_string=application_insights_connection_string)
                     AIProjectInstrumentor().instrument(True)
                     app.state.application_insights_connection_string = application_insights_connection_string
-                    logger.info("Configured Application Insights for tracing.")                        
+                    logger.info("Configured Application Insights for tracing.")
 
             if agent_id:
                 if agent_id.count(":") != 1:
                     message = "AZURE_EXISTING_AGENT_ID must be in the format 'agent_name:agent_version'."
                     message += f" (Environment from {env_file})"
                     raise RuntimeError(message)
-                try: 
+                try:
                     agent_name = agent_id.split(":")[0]
                     agent_version = agent_id.split(":")[1]
                     agent_version_obj = await project_client.agents.get_version(agent_name, agent_version)
@@ -83,7 +84,7 @@ async def lifespan(app: fastapi.FastAPI):
 
 
 def create_app():
-    
+
     global logger, env_file
     logger = configure_logging(os.getenv("APP_LOG_FILE", ""))
 
@@ -94,8 +95,7 @@ def create_app():
     if env_file:
         logger.info(f"Loaded environment variables from {env_file}")
     else:
-        logger.info("Loaded environment variables from default location")    
-    
+        logger.info("Loaded environment variables from default location")
 
     enable_trace_string = os.getenv("ENABLE_AZURE_MONITOR_TRACING", "")
     global enable_trace
@@ -118,14 +118,20 @@ def create_app():
     directory = os.path.join(os.path.dirname(__file__), "static")
     app = fastapi.FastAPI(lifespan=lifespan)
     app.mount("/static", StaticFiles(directory=directory), name="static")
-    
+
     # Mount React static files
     # Uncomment the following lines if you have a React frontend
     # react_directory = os.path.join(os.path.dirname(__file__), "static/react")
     # app.mount("/static/react", StaticFiles(directory=react_directory), name="react")
 
     from . import routes  # Import routes
+    from . import mcp
+
     app.include_router(routes.router)
+    app.include_router(mcp.router)
+
+    mcp = FastApiMCP(app, include_operations=["mcp_demo"])
+    mcp.mount_http()
 
     # Global exception handler for any unhandled exceptions
     @app.exception_handler(Exception)
@@ -135,5 +141,5 @@ def create_app():
             status_code=500,
             content={"detail": "Internal server error"}
         )
-    
+
     return app
